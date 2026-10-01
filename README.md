@@ -11,10 +11,14 @@
 
 ### Install
 
+**Easiest: Storefront.** In KOReader's Storefront, search **SINdle** under patches, install, and restart KOReader. The decoy book is created in your library automatically.
+
+**Or manually:** **[⬇ Download the latest SINdle zip](https://github.com/idkrandombuilds/SINdle/releases/latest)**, unzip it, then:
+
 - Place `koreader/patches/2-sindle.lua` in your device's **`koreader/patches/`** folder (create `patches` if it doesn't exist).
-- Place the decoy book from `decoy-book/` in your **normal library**.
-- Place your private books in **`koreader/system/`**. (you can change this folder later.)
-- Restart KOReader.
+- Restart KOReader. The decoy book appears in your library automatically (or copy one from `decoy-book/` yourself).
+
+Then put your private books in **`koreader/system/`** (you can change this folder later).
 
 ### First use
 
