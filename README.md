@@ -43,6 +43,8 @@ Tap the top of the screen to reveal KoReader's top menu, tap the gear <img src="
 - **Optional: Custom Decoy:** Privacy → Decoy book lets you pick any book you own. To edit the included one, open the EPUB in Calibre (Edit metadata / Edit book) or use the files in `decoy-book/source/`.
 - **Alternate Private Library Folder:** Privacy → Private library folder. Hidden dot-folders like `.private` work too.
 - **Lock with a gesture:** gear → Taps and gestures → Gesture manager → pick a gesture → General → **Lock now**. Handy with Bookshelf, which has no Home button.
+- **Bookshelf:** unlocking shows the private library on Bookshelf's Home tab. If your Home tab is set to a fixed folder (or turned off), the private folder opens on the shelf instead.
+- **For plugin makers:** other plugins can check whether the private library is open via the read-only `__SINDLE` table (`is_unlocked()`, `private_dir()`, `public_home_dir()`, `is_private(path)`). While locked it reveals nothing about the private folder.
 - **Forgot your passcode:** Just delete `koreader/settings/private-code (delete to reset).lua` from a computer. Your books aren't touched.
 - **Uninstall:** delete `2-sindle.lua` and restart KOReader.
 
