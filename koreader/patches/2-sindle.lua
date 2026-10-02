@@ -7,8 +7,8 @@ Then KOReader's library switches to a private folder (default: koreader/system).
 
 * Private books never show up in history, Continue (for the normal library),
   reading statistics, or the file browser while locked.
-* Locks on: power button / sleep, Home, "Lock now", restarting KOReader,
-  and optionally when closing a private book. "Lock now" is also a gesture /
+* Locks on: power button / sleep, Home, "Lock Now", restarting KOReader,
+  and optionally when closing a private book. "Lock Now" is also a gesture /
   quick menu action.
 * First run: if your library has no decoy book yet, one is created for you
   ("The Extensive Analysis of the Color Brown", with its cover).
@@ -82,7 +82,7 @@ local function S()
     return settings
 end
 
--- The private folder (configurable in Privacy -> Private library folder).
+-- The private folder (configurable in Privacy -> Private Library Folder).
 local private_dir, private_key, private_parent_key, private_name
 local function set_private_dir(p)
     private_dir = realpath(p)
@@ -107,6 +107,7 @@ end
 local unlocked     = false   -- memory only: every restart starts locked
 local public_last  = nil     -- public "lastfile" saved while unlocked
 local pending_lock = false   -- extra security: lock on next file-browser show
+local home_view_quiet_until = 0 -- os.time() until which Zen's Home screen doesn't lock
 
 local function first_public_history_file()
     local ok, ReadHistory = pcall(require, "readhistory")
@@ -287,14 +288,44 @@ local function restore_public_home()
     end
 end
 
+-- Zen's Home screen API (Last read, recent books). Zen keeps it in its plugin's
+-- shared-state registry, not in package.loaded.
+local function zen_home_api()
+    local fm = require("apps/filemanager/filemanager").instance
+    local zen = fm and rawget(fm, "zenos")
+    local SharedState = package.loaded["common/shared_state"]
+    if type(zen) ~= "table" or type(SharedState) ~= "table"
+            or type(SharedState.get) ~= "function" then return nil end
+    local ok, home = pcall(SharedState.get, zen, "home")
+    return ok and type(home) == "table" and home or nil
+end
+
+-- Make Zen's Home screen drop the reading history it cached for the other library
+-- (it would keep showing that library's last read book) and rebuild.
+local function refresh_zen_home()
+    local home = zen_home_api()
+    if not home then return end
+    if type(home.invalidateBookCache) == "function" then
+        pcall(home.invalidateBookCache, home_dir() or "/", true)
+    end
+    if type(home.rebuildActive) == "function" then pcall(home.rebuildActive) end
+end
+
 -- Make Zen rebuild its Library page from the (new) home folder next time it's shown.
+-- Zen also caches folder listings and trusts them while the folder's timestamps look
+-- unchanged, which can miss a book moved between the libraries (Cut/Paste), so its
+-- listing cache is dropped too.
 local function mark_library_stale()
+    pcall(refresh_zen_home)
     local fm = require("apps/filemanager/filemanager").instance
     local fc = fm and fm.file_chooser
     if not fc then return end
     fc._zen_home_retained_library = nil
     fc._zen_idle_materialized_library = nil
     fc._zen_needs_full_listing = true
+    if type(fc._zen_clear_item_table_cache) == "function" then
+        pcall(fc._zen_clear_item_table_cache, fc)
+    end
 end
 
 -- The "Privacy" entry in the file browser's settings (gear) tab only exists while
@@ -367,8 +398,8 @@ local function lock_now()
     end
 end
 
--- Home ends the private session if "Home button returns to the public library" is on
--- (default) or Extra security is on.
+-- Home ends the private session if "Press Home in Library to Exit"
+-- is on (default) or Extra Security is on.
 local function home_should_lock()
     return unlocked and (S():isTrue("extra_security") or not S():isTrue("home_stays_private"))
 end
@@ -383,15 +414,21 @@ local wrapped_home_modules = setmetatable({}, { __mode = "k" })
 local our_home_wrappers = setmetatable({}, { __mode = "k" })
 local function hook_zen_home_view()
     -- Zen's Home tab shows its home screen without changing folders; lock first.
-    for _, mod in pairs(package.loaded) do
+    local candidates = {}
+    for _, mod in pairs(package.loaded) do candidates[#candidates + 1] = mod end
+    candidates[#candidates + 1] = zen_home_api()
+    for _, mod in ipairs(candidates) do
         if type(mod) == "table" and not wrapped_home_modules[mod]
                 and type(rawget(mod, "showHomeView")) == "function" then
             wrapped_home_modules[mod] = true
-            for _, name in ipairs({ "showHomeView", "resumeActive" }) do
+            -- resetStripPages: the Home tab tapped while the Home screen is already up.
+            for _, name in ipairs({ "showHomeView", "resumeActive", "resetStripPages" }) do
                 local fn = rawget(mod, name)
                 if type(fn) == "function" then
                     mod[name] = function(...)
-                        lock_for_home()
+                        -- Not when Zen shows its Home screen by itself right after a
+                        -- private book was closed (closing a book doesn't lock).
+                        if os.time() > home_view_quiet_until then lock_for_home() end
                         return fn(...)
                     end
                 end
@@ -419,6 +456,25 @@ local function hook_zen_home_view()
         end
         our_home_wrappers[w] = true
         FileManager.onHome = w
+    end
+    -- Home inside a private book (Zen's house icon / Home key) just closes the book
+    -- and shows the private library; Home in the library then leaves it. Extra
+    -- security keeps "closing a private book locks".
+    local nav = package.loaded["common/library_navigation"]
+    local show_from_reader = type(nav) == "table" and rawget(nav, "showFromReader")
+    if type(show_from_reader) == "function" and not our_home_wrappers[show_from_reader] then
+        local w = function(ui, plugin, opts)
+            local plain = type(opts) ~= "table" or not (opts.open_home or opts.target_tab
+                or opts.target_folder or opts.target_tag)
+            local file = ui and ui.document and ui.document.file
+            if plain and unlocked and file and is_private(file)
+                    and not S():isTrue("extra_security") then
+                opts = { target_tab = "books" }
+            end
+            return show_from_reader(ui, plugin, opts)
+        end
+        our_home_wrappers[w] = true
+        nav.showFromReader = w
     end
 end
 
@@ -519,7 +575,7 @@ end
 
 local function code_required() return not S():isTrue("code_disabled") end
 
--- Last gate before the private library: the passcode (if "Require passcode" is on).
+-- Last gate before the private library: the passcode (if "Require Passcode" is on).
 local function enter_private()
     if unlocked then unlock() return end
     if not code_required() then unlock() return end
@@ -535,7 +591,7 @@ local function enter_private()
     end)
 end
 
--- "Show fake error" mode: looks like a normal KOReader error box.
+-- "Show Fake Error" mode: looks like a normal KOReader error box.
 --   X (top-left), OK (bottom) or a tap outside: close.
 --   Two quick taps on the empty top-right corner of the box: on_secret().
 local function show_fake_error(on_secret)
@@ -655,7 +711,7 @@ local function on_decoy_tap()
     end
 end
 
--- Which book is the decoy: a chosen file (Privacy -> Decoy book), else the default
+-- Which book is the decoy: a chosen file (Privacy -> Decoy Book), else the default
 -- brown book matched by its filename.
 local function is_decoy(file)
     if type(file) ~= "string" then return false end
@@ -725,7 +781,7 @@ local function change_private_dir(p, create)
         pcall(mark_library_stale)
         pcall(open_private_folder)
     end
-    info("Private library folder:\n" .. short_path(private_dir), 3)
+    info("Private Library Folder:\n" .. short_path(private_dir), 3)
 end
 
 -- A KOReader PathChooser shown as a plain file list (this picker only).
@@ -779,7 +835,7 @@ local function decoy_label()
     if type(dp) == "string" and dp ~= "" and lfs.attributes(dp, "mode") == "file" then
         return basename(dp):gsub("%.[^.]+$", "")
     end
-    return "The Extensive Analysis of the Color Brown (default)"
+    return "The Extensive Analysis of the Color Brown (Default)"
 end
 
 local function choose_decoy()
@@ -794,12 +850,12 @@ local function choose_decoy()
             end
             S():saveSetting("decoy_path", realpath(file))
             S():flush()
-            info("Decoy book:\n" .. basename(file), 3)
+            info("Decoy Book:\n" .. basename(file), 3)
         end,
     }
 end
 
--- "Require passcode" and "Show fake error" are mutually exclusive: one protection at a
+-- "Require Passcode" and "Show Fake Error" are mutually exclusive: one protection at a
 -- time (or neither). Both toggles live only in the unlocked Privacy menu.
 local function confirm(text, ok_text, on_ok)
     UIManager:show(require("ui/widget/confirmbox"):new{ text = text, ok_text = ok_text, ok_callback = on_ok })
@@ -827,7 +883,7 @@ end
 local function toggle_fake_error(touchmenu)
     local function refresh() if touchmenu then touchmenu:updateItems() end end
     if S():isTrue("fake_error") then
-        confirm("Turn off the fake error?\n\nThe passcode is also off, so anyone who opens the decoy book will get into your private library. (Turn on \"Require passcode\" instead to keep it protected.)",
+        confirm("Turn off the fake error?\n\nThe passcode is also off, so anyone who opens the decoy book will get into your private library. (Turn on \"Require Passcode\" instead to keep it protected.)",
             "Turn off", function() set_protection(false, false); refresh() end)
     else
         confirm("Turn on the fake error?\n\nThis turns off the passcode: the secret double-tap on the error box will open your private library directly.",
@@ -839,12 +895,12 @@ local function type_private_dir()
     local InputDialog = require("ui/widget/inputdialog")
     local d
     d = InputDialog:new{
-        title = "Private library folder",
+        title = "Private Library Folder",
         input = private_dir,
         description = "Full path. Folders whose name starts with a dot (e.g. /mnt/us/.private) are hidden. The folder is created if it doesn't exist.",
         buttons = {{
             { text = "Cancel", id = "close", callback = function() UIManager:close(d) end },
-            { text = "Use this folder", is_enter_default = true, callback = function()
+            { text = "Use This Folder", is_enter_default = true, callback = function()
                 local t = d:getInputText()
                 UIManager:close(d)
                 change_private_dir(t, true)
@@ -858,38 +914,39 @@ end
 local function privacy_menu_items()
     local items = {
         {
-            text = "Require passcode",
+            text = "Require Passcode",
             checked_func = code_required,
             check_callback_updates_menu = true, -- turning it off asks first
             callback = function(touchmenu) toggle_code_required(touchmenu) end,
         },
         {
-            text = "Show fake error when the decoy is opened",
+            text = "Show Fake Error When the Decoy Is Opened",
             help_text = "Instead of a passcode: opening the decoy shows \"Error, could not load book\". X, OK or tapping outside closes it. Tap the empty top-right corner of the box twice quickly to open the private library. Turning this on turns the passcode off, and vice versa.",
             checked_func = function() return S():isTrue("fake_error") end,
             check_callback_updates_menu = true, -- asks first
             callback = function(touchmenu) toggle_fake_error(touchmenu) end,
         },
         {
-            text_func = function() return "Decoy book: " .. decoy_label() end,
+            text_func = function() return "Decoy Book: " .. decoy_label() end,
             sub_item_table = {
-                { text = "Choose a book... (long-press it)", callback = choose_decoy },
-                { text = "Reset to default (The Extensive Analysis of the Color Brown)", callback = function()
+                { text = "Choose a Book... (Long-Press It)", callback = choose_decoy },
+                { text = "Reset to Default (The Extensive Analysis of the Color Brown)", callback = function()
                     S():delSetting("decoy_path"); S():flush()
-                    info("Decoy book: The Extensive Analysis of the Color Brown", 3)
+                    info("Decoy Book: The Extensive Analysis of the Color Brown", 3)
                 end },
             },
             separator = true,
         },
         {
-            text = "Extra security: lock when closing a book",
+            text = "Extra Security: Lock When Closing a Private Book",
+            help_text = "On: leaving a private book always locks, also with the Home (house) button inside the book, and Home in the library always locks. Off: Home inside a private book just closes it and shows the private library.",
             checked_func = function() return S():isTrue("extra_security") end,
             callback = function()
                 S():flipNilOrFalse("extra_security"); S():flush()
             end,
         },
         {
-            text = "Lock on power button / sleep",
+            text = "Lock on Power Button / Sleep",
             checked_func = function() return not S():isTrue("power_lock_disabled") end,
             callback = function()
                 S():flipNilOrFalse("power_lock_disabled"); S():flush()
@@ -897,18 +954,18 @@ local function privacy_menu_items()
             separator = true,
         },
         {
-            text_func = function() return "Private library folder: " .. short_path(private_dir) end,
+            text_func = function() return "Private Library Folder: " .. short_path(private_dir) end,
             sub_item_table = {
-                { text = "Browse... (hidden folders shown)", callback = browse_private_dir },
-                { text = "Type a path...", callback = type_private_dir },
-                { text = "Reset to default (koreader/system)", callback = function()
+                { text = "Browse... (Hidden Folders Shown)", callback = browse_private_dir },
+                { text = "Type a Path...", callback = type_private_dir },
+                { text = "Reset to Default (koreader/system)", callback = function()
                     change_private_dir(DEFAULT_PRIVATE_DIR, true)
                 end },
             },
             separator = true,
         },
         {
-            text = "Change passcode",
+            text = "Change Passcode",
             callback = function()
                 set_new_pin(function()
                     UIManager:show(require("ui/widget/infomessage"):new{ text = "Passcode changed.", timeout = 2 })
@@ -916,15 +973,15 @@ local function privacy_menu_items()
             end,
         },
         {
-            text = "Lock now", -- inside a private book: closes it and goes to the normal library
+            text = "Lock Now", -- inside a private book: closes it and goes to the normal library
             callback = function() UIManager:nextTick(lock_now) end, -- after the menu closes
         },
     }
     -- Bookshelf has no Home button, so the Home setting is only shown without it.
     if not bs_live() then
-        table.insert(items, 5, { -- after "Extra security"
-            text = "Home button returns to the public library",
-            help_text = "On: Home locks the private library and takes you to your normal Home/library. Off: Home keeps you in the private library (unless Extra security is on).",
+        table.insert(items, 5, { -- after "Extra Security"
+            text = "Press Home in Library to Exit",
+            help_text = "On: Home in the private library (the Home tab or Home icon) locks it and takes you to your normal Home/library. Off: you stay in the private library; lock with the power button or Lock Now. Home inside a private book only closes the book (see Extra Security).",
             checked_func = function() return not S():isTrue("home_stays_private") end,
             callback = function()
                 S():flipNilOrFalse("home_stays_private"); S():flush()
@@ -1025,13 +1082,18 @@ safe_wrap(ReaderUI, "showReader", function(orig)
 end)
 
 -- Extra security: closing a private book locks before the library is shown again.
+-- Otherwise closing stays unlocked, also when Zen then opens its Home screen.
 safe_wrap(ReaderUI, "onClose", function(orig)
     return function(self, ...)
         local was_private = false
         pcall(function() was_private = self.document and is_private(self.document.file) end)
         local r = orig(self, ...)
-        if was_private and unlocked and S():isTrue("extra_security") then
-            pending_lock = true
+        if was_private and unlocked then
+            if S():isTrue("extra_security") then
+                pending_lock = true
+            else
+                home_view_quiet_until = os.time() + 3
+            end
         end
         return r
     end
@@ -1198,12 +1260,12 @@ userpatch.registerPatchPluginFunc("bookshelf", function(plugin)
     end)
 end)
 
--- "Lock now" as an action for gestures / the quick menu (works with any home screen).
+-- "Lock Now" as an action for gestures / the quick menu (works with any home screen).
 pcall(function()
     require("dispatcher"):registerAction("sindle_lock_now", {
         category = "none",
         event    = "SINdleLockNow",
-        title    = "Lock now",
+        title    = "Lock Now",
         general  = true,
     })
 end)
@@ -1275,7 +1337,7 @@ safe_wrap(FileChooser, "changeToPath", function(orig)
         if unlocked then pcall(hook_zen_home_view) end
         pcall(function()
             -- Lock rules apply to the library browser only, not to folder pickers
-            -- (e.g. Privacy -> Private library folder -> Browse).
+            -- (e.g. Privacy -> Private Library Folder -> Browse).
             local is_library = self.name == "filemanager"
             if pending_lock and is_library then
                 lock(false)
