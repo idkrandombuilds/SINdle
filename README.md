@@ -7,7 +7,7 @@
 
 ---
 
-**What it does.** A dull decoy book sits in your normal library. Open it, enter your code, and KOReader's library switches to a hidden library of private books. Press the power button or Home, and everything snaps back to normal (customizable in settings). Private books never show up in history, continue, or reading statistics, and the folder is hidden while locked. Tested with the ZenOS/Zen UI plugin; it should also work without it (untested).
+**What it does.** A dull decoy book sits in your normal library. Open it, enter your passcode, and KOReader's library switches to a hidden library of private books. Press the power button or Home, and everything snaps back to normal (customizable in settings). Private books never show up in history, continue, or reading statistics, and the folder is hidden while locked. Works with the ZenOS/Zen UI and Bookshelf plugins, or plain KOReader.
 
 ### Install
 
@@ -23,12 +23,12 @@ Then put your private books in **`koreader/system/`** (you can change this folde
 ### First use
 
 - **Tap the decoy book.**
-- **Set your secret code** (4–8 letters/numbers).
+- **Set your passcode** (4–8 letters/numbers).
 - **Change the security method via settings** if you like (more on that below).
 
 ### Security methods
 
-- **Secret code** (default): enter your secret code to get in. A wrong code just closes the box.
+- **Passcode** (default): enter your passcode to get in. A wrong passcode just closes the box.
   <br><img src="images/02-code-prompt.png" width="220" alt="Secret code prompt">
 - **Secret button**: the decoy shows a fake *"Error, could not load book"*. Double-Tap the empty top-right corner of the box (circled in red here) to get in. X, OK or tapping outside just closes it.
   <br><img src="images/05-fake-error.png" width="220" alt="Fake error with the secret button marked">
@@ -36,16 +36,17 @@ Then put your private books in **`koreader/system/`** (you can change this folde
 ### Settings
 
 Tap the top of the screen to reveal KoReader's top menu, tap the gear <img src="images/gear.png" height="22" alt="gear icon">, then tap **Privacy**.
-*Note: Privacy Settings only appears while you're inside the private library.*
+*Note: Privacy only appears while unlocked: in the private library and inside private books.*
 
 ### Features
 
 - **Optional: Custom Decoy:** Privacy → Decoy book lets you pick any book you own. To edit the included one, open the EPUB in Calibre (Edit metadata / Edit book) or use the files in `decoy-book/source/`.
 - **Alternate Private Library Folder:** Privacy → Private library folder. Hidden dot-folders like `.private` work too.
-- **Forgot your secret code:** Just delete `koreader/settings/private-code (delete to reset).lua` from a computer. Your books aren't touched.
+- **Lock with a gesture:** gear → Taps and gestures → Gesture manager → pick a gesture → General → **Lock now**. Handy with Bookshelf, which has no Home button.
+- **Forgot your passcode:** Just delete `koreader/settings/private-code (delete to reset).lua` from a computer. Your books aren't touched.
 - **Uninstall:** delete `2-sindle.lua` and restart KOReader.
 
 ### Disclaimer
 - **Not encryption:** anyone with a computer and a USB cable can still see the files.
 
-<sub>MIT licensed. See [LICENSE](LICENSE). Not affiliated with Amazon, KOReader or ZenOS.</sub>
+<sub>MIT licensed. See [LICENSE](LICENSE). Not affiliated with Amazon, KOReader, ZenOS or Bookshelf.</sub>
