@@ -154,9 +154,43 @@ local function maybe_private(p)
         and is_private(p)
 end
 
+-- Does this Bookshelf tab show anything from the private library (books or folders)?
+local function tab_shows_private(w, tab_id)
+    local saved = w.chip
+    w.chip = tab_id
+    w._spine_fetch_cache = nil
+    local ok, items = pcall(w._fetchChipItems, w, 40)
+    w.chip = saved
+    w._spine_fetch_cache = nil
+    for _, it in ipairs(ok and type(items) == "table" and items or {}) do
+        if type(it) == "table" and (maybe_private(it.filepath) or (it.kind == "folder" and maybe_private(it.path))) then
+            return true
+        end
+    end
+    return false
+end
+
+-- The tab to show the private library in: one that shows the whole library folder
+-- (Bookshelf's Home "all" / flattened "library" sources follow KOReader's home folder,
+-- which is the private folder while unlocked). Tabs pinned to a fixed folder don't
+-- follow it, and "Latest" only lists recent additions, so they're not used.
+-- nil: no such tab - the caller opens the private folder itself.
+local function pick_private_tab(w)
+    local ok, TabModel = pcall(require, BS_TABS)
+    if not (ok and type(TabModel) == "table" and TabModel.getActive) then return end
+    local candidates = {}
+    for _, kind in ipairs({ "all", "library" }) do
+        for _, t in ipairs(TabModel.getActive()) do
+            if type(t.source) == "table" and t.source.kind == kind then candidates[#candidates + 1] = t.id end
+        end
+    end
+    for _, id in ipairs(candidates) do
+        if tab_shows_private(w, id) then return id end
+    end
+end
+
 -- Back to the top of the shelf, forget everything cached about the old library.
--- to_home_tab: also switch to Bookshelf's "Home" tab (used on unlock, so the private
--- library is what appears).
+-- to_home_tab: also switch to a tab that shows the private library (used on unlock).
 local function bookshelf_sync(to_home_tab)
     local Repo = package.loaded[BS_REPO]
     if type(Repo) == "table" and type(Repo.invalidateWalkCache) == "function" then
@@ -177,9 +211,15 @@ local function bookshelf_sync(to_home_tab)
     w._spine_fetch_cache = nil -- the spine view's own shelf list (kept ~30 s)
     w._cursor = 1
     if to_home_tab then
-        local ok, TabModel = pcall(require, BS_TABS)
-        local tab = ok and type(TabModel) == "table" and TabModel.getById and TabModel.getById("all")
-        if tab and tab.enabled ~= false then w.chip = "all" end
+        local ok, id = pcall(pick_private_tab, w)
+        if ok and id then
+            w.chip = id
+        else
+            -- No tab shows it (e.g. Home turned off, or pinned to a fixed folder): open
+            -- the private folder itself. Locking resets this, and it is never restored
+            -- after a restart.
+            w._drilldown_path = { { kind = "folder", label = private_name, payload = { path = private_dir } } }
+        end
     end
     if w._syncPageFromCursor then pcall(w._syncPageFromCursor, w) end
     if not bs_defer and UIManager:isWidgetShown(w) and bs_visible(w) then
@@ -1168,6 +1208,23 @@ pcall(function()
     })
 end)
 local function on_lock_now_event() pcall(lock_now) return true end
+
+-- For other plugins, e.g. to offer saving a book into the private library while it is
+-- open. Read-only; while locked it reveals nothing about the private folder.
+_G.__SINDLE = {
+    is_unlocked = function() return unlocked end,
+    private_dir = function() return unlocked and private_dir or nil end,
+    -- the normal library folder (while unlocked, KOReader's home folder is the private one)
+    public_home_dir = function()
+        if unlocked then
+            local saved = S():readSetting("public_home_dir")
+            if type(saved) == "string" and saved ~= "" then return saved end
+            return require("device").home_dir
+        end
+        return home_dir()
+    end,
+    is_private = function(p) return is_private(p) end,
+}
 
 -- File browser: lock when leaving the private folder; never show it while locked.
 local FileManager = require("apps/filemanager/filemanager")
